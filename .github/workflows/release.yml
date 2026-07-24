@@ -1,4 +1,4 @@
-name: Build and publish wheels
+name: Build, test, and publish wheels
 
 on:
   pull_request:
@@ -14,6 +14,8 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Release gate: metadata -> source tests -> wheel builds -> installed-wheel tests
+# -> PyPI. Pull requests and manual runs stop before the tag-only publish job.
 jobs:
   verify-release:
     name: Verify release metadata
@@ -87,9 +89,34 @@ jobs:
               )
           PY
 
+  test-python:
+    name: Test Python asset APIs
+    needs: verify-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Install Python test dependencies
+        run: python -m pip install pytest "coacd>=1.0.11" "numpy>=1.26" "trimesh>=4.0" "vtk==9.6.2"
+
+      - name: Verify core mesh test dependencies
+        run: python -c "import coacd, numpy, trimesh, vtkmodules"
+
+      - name: Run Python unit tests
+        env:
+          PYTHONPATH: src
+        run: python -m pytest -q -ra tests
+
   build-wheels:
     name: Build ${{ matrix.target.name }} wheel
-    needs: verify-release
+    needs: test-python
     runs-on: ${{ matrix.target.os }}
     strategy:
       fail-fast: false
@@ -129,32 +156,7 @@ jobs:
           path: wheelhouse/*.whl
           if-no-files-found: error
 
-  test-python:
-    name: Test Python asset APIs
-    needs: verify-release
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.13"
-
-      - name: Install Python test dependencies
-        run: python -m pip install pytest "coacd>=1.0.11" "numpy>=1.26" "trimesh>=4.0" "vtk==9.6.2"
-
-      - name: Verify core mesh test dependencies
-        run: python -c "import coacd, numpy, trimesh, vtkmodules"
-
-      - name: Run Python unit tests
-        env:
-          PYTHONPATH: src
-        run: python -m pytest -q -ra tests
-
-  test-wheels:
+  test-windows-macos-wheels:
     name: Test ${{ matrix.target.name }} on Python ${{ matrix.python-version }}
     needs: build-wheels
     runs-on: ${{ matrix.target.os }}
@@ -195,11 +197,14 @@ jobs:
       - name: Verify installed dependencies
         run: python -m pip check
 
-      - name: Run wheel smoke tests
+      - name: Run full feature smoke tests
         run: python tests/smoke_wheel.py
 
-  test-linux-minimal:
-    name: Test ${{ matrix.target.name }} in Python ${{ matrix.python-version }} slim
+  # A clean container catches accidental dependencies on packages from the
+  # GitHub-hosted Ubuntu image. Container jobs are Linux-only, so these wheel
+  # tests cannot share a job matrix with the native Windows and macOS tests.
+  test-linux-wheels:
+    name: Test ${{ matrix.target.name }} on Python ${{ matrix.python-version }} (clean container)
     needs: build-wheels
     runs-on: ${{ matrix.target.os }}
     container: python:${{ matrix.python-version }}-slim-bookworm
@@ -236,17 +241,15 @@ jobs:
       - name: Verify installed dependencies
         run: python -m pip check
 
-      - name: Run wheel smoke tests
+      - name: Run full feature smoke tests
         run: python tests/smoke_wheel.py
 
   publish-pypi:
     name: Publish wheels to PyPI
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs:
-      - build-wheels
-      - test-python
-      - test-wheels
-      - test-linux-minimal
+      - test-windows-macos-wheels
+      - test-linux-wheels
     runs-on: ubuntu-latest
     environment:
       name: pypi

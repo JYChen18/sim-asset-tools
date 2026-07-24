@@ -87,13 +87,54 @@ def verify_installed_tools() -> None:
             raise RuntimeError(f"Expected installed native executable: {path}")
 
 
-def run_acvd_cases(temporary_path: Path) -> None:
+def verify_cli_entry_point() -> None:
+    executable = shutil.which("sim-assets")
+    if executable is None:
+        raise RuntimeError("The installed sim-assets entry point is missing")
+    subprocess.run(
+        [executable, "--help"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def run_normalize(temporary_path: Path) -> Path:
+    output = temporary_path / "normalize" / "object.obj"
+    result = sim_assets_main(["mesh", "normalize", str(FIXTURE), str(output)])
+    if result != 0:
+        raise RuntimeError(f"Normalize smoke test failed with exit code {result}")
+    require_output(output)
+    return output
+
+
+def run_openvdb(input_path: Path, temporary_path: Path) -> Path:
+    output = temporary_path / "openvdb" / "object.obj"
+    result = sim_assets_main(
+        [
+            "mesh",
+            "openvdb",
+            str(input_path),
+            str(output),
+            "--resolution",
+            "10",
+        ]
+    )
+    if result != 0:
+        raise RuntimeError(f"OpenVDB smoke test failed with exit code {result}")
+    require_output(output)
+    return output
+
+
+def run_acvd_cases(temporary_path: Path, default_input: Path) -> Path:
+    default_output = None
     for method, tool, cli_extra, native_extra in ACVD_CASES:
+        input_path = default_input if method == "acvd" else FIXTURE
         output = temporary_path / f"{method}.ply"
         argv = [
             "mesh",
             "acvd",
-            str(FIXTURE),
+            str(input_path),
             str(output),
             "--method",
             method,
@@ -109,7 +150,7 @@ def run_acvd_cases(temporary_path: Path) -> None:
         if result != 0:
             if result < 0:
                 native_args = [
-                    str(FIXTURE),
+                    str(input_path),
                     "4",
                     "0",
                     "-o",
@@ -121,6 +162,8 @@ def run_acvd_cases(temporary_path: Path) -> None:
                 diagnose_native_crash(tool, native_args)
             raise RuntimeError(f"{method} smoke test failed with exit code {result}")
         require_output(output)
+        if method == "acvd":
+            default_output = output
 
     dotted_output = temporary_path / ".object" / "output.ply"
     result = sim_assets_main(
@@ -142,6 +185,9 @@ def run_acvd_cases(temporary_path: Path) -> None:
     require_output(dotted_output)
     if not dotted_output.read_bytes().startswith(b"ply"):
         raise RuntimeError(f"ACVD wrote the wrong format: {dotted_output}")
+    if default_output is None:
+        raise RuntimeError("Default ACVD smoke test did not run")
+    return default_output
 
 
 def write_volume_fixture(root: Path) -> Path:
@@ -207,9 +253,11 @@ def run_volume_analysis(temporary_path: Path) -> None:
     require_output(temporary_path / "meshes.xml")
 
 
-def run_coacd(temporary_path: Path) -> None:
+def run_coacd(input_path: Path, temporary_path: Path) -> None:
     output_directory = temporary_path / "coacd"
-    result = sim_assets_main(["mesh", "coacd", str(FIXTURE), str(output_directory)])
+    result = sim_assets_main(
+        ["mesh", "coacd", str(input_path), str(output_directory)]
+    )
     if result != 0:
         raise RuntimeError(f"CoACD smoke test failed with exit code {result}")
     parts = sorted(output_directory.glob("part_*.obj"))
@@ -217,6 +265,89 @@ def run_coacd(temporary_path: Path) -> None:
         raise RuntimeError("CoACD smoke test did not produce collision parts")
     for part in parts:
         require_output(part)
+
+
+def object_recipe_arguments() -> list[str]:
+    return [
+        "--resolution",
+        "10",
+        "--vertices",
+        "64",
+        "--gradation",
+        "0",
+        "--coacd-preprocess-resolution",
+        "10",
+    ]
+
+
+def verify_object_bundle(output_directory: Path) -> None:
+    for relative_path in (
+        "asset.json",
+        "visual.obj",
+        "model.xml",
+        "model.urdf",
+    ):
+        require_output(output_directory / relative_path)
+    collision_parts = sorted((output_directory / "collision").glob("part_*.obj"))
+    if not collision_parts:
+        raise RuntimeError(
+            f"Prepared object has no collision parts: {output_directory}"
+        )
+    for part in collision_parts:
+        require_output(part)
+
+    result = sim_assets_main(["check", "object", str(output_directory)])
+    if result != 0:
+        raise RuntimeError(
+            f"Object validation smoke test failed with exit code {result}: "
+            f"{output_directory}"
+        )
+
+
+def run_prepare_object(temporary_path: Path) -> None:
+    output_directory = temporary_path / "prepare-object"
+    result = sim_assets_main(
+        [
+            "prepare",
+            "object",
+            str(FIXTURE),
+            "--output",
+            str(output_directory),
+            *object_recipe_arguments(),
+        ]
+    )
+    if result != 0:
+        raise RuntimeError(
+            f"Single-object preparation smoke test failed with exit code {result}"
+        )
+    verify_object_bundle(output_directory)
+
+
+def run_prepare_objects(temporary_path: Path) -> None:
+    input_directory = temporary_path / "objects"
+    input_directory.mkdir()
+    for name in ("first.obj", "second.obj"):
+        shutil.copy2(FIXTURE, input_directory / name)
+
+    output_directory = temporary_path / "prepare-objects"
+    result = sim_assets_main(
+        [
+            "prepare",
+            "objects",
+            str(input_directory),
+            "--output",
+            str(output_directory),
+            "--jobs",
+            "2",
+            *object_recipe_arguments(),
+        ]
+    )
+    if result != 0:
+        raise RuntimeError(
+            f"Batch object preparation smoke test failed with exit code {result}"
+        )
+    for name in ("first", "second"):
+        verify_object_bundle(output_directory / name)
 
 
 def run_public_workflow_primitives(temporary_path: Path) -> None:
@@ -235,28 +366,16 @@ def run_public_workflow_primitives(temporary_path: Path) -> None:
 
 def run() -> None:
     verify_installed_tools()
+    verify_cli_entry_point()
     with tempfile.TemporaryDirectory() as temporary_directory:
         temporary_path = Path(temporary_directory)
         run_public_workflow_primitives(temporary_path)
-        openvdb_output = temporary_path / "openvdb.obj"
-
-        openvdb_result = sim_assets_main(
-            [
-                "mesh",
-                "openvdb",
-                str(FIXTURE),
-                str(openvdb_output),
-                "--resolution",
-                "10",
-            ]
-        )
-        if openvdb_result != 0:
-            raise RuntimeError(
-                f"OpenVDB smoke test failed with exit code {openvdb_result}"
-            )
-        require_output(openvdb_output)
-        run_acvd_cases(temporary_path)
-        run_coacd(temporary_path)
+        normalized_output = run_normalize(temporary_path)
+        openvdb_output = run_openvdb(normalized_output, temporary_path)
+        acvd_output = run_acvd_cases(temporary_path, openvdb_output)
+        run_coacd(acvd_output, temporary_path)
+        run_prepare_object(temporary_path)
+        run_prepare_objects(temporary_path)
         run_volume_analysis(temporary_path)
 
 
