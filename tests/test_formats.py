@@ -7,7 +7,6 @@ from pathlib import Path
 from sim_asset_tools.formats.manifest import (
     load_manifest,
     resolve_artifact,
-    sha256_directory,
     sha256_file,
     sha256_json,
     verify_sha256_map,
@@ -22,40 +21,6 @@ class ManifestFormatTests(unittest.TestCase):
 
         self.assertEqual(sha256_json(first), sha256_json(second))
         self.assertNotEqual(sha256_json(first), sha256_json({"schema": 1}))
-
-    def test_directory_fingerprint_covers_names_and_contents(self) -> None:
-        with tempfile.TemporaryDirectory() as value:
-            root = Path(value)
-            first = root / "part_000.obj"
-            second = root / "part_001.obj"
-            first.write_text("first\n", encoding="utf-8")
-            second.write_text("second\n", encoding="utf-8")
-            original = sha256_directory(root)
-
-            first.write_text("changed\n", encoding="utf-8")
-            self.assertNotEqual(sha256_directory(root), original)
-            first.write_text("first\n", encoding="utf-8")
-            second.rename(root / "renamed.obj")
-            self.assertNotEqual(sha256_directory(root), original)
-            (root / "renamed.obj").rename(second)
-            (root / "part_002.obj").write_text("third\n", encoding="utf-8")
-            self.assertNotEqual(sha256_directory(root), original)
-
-    def test_directory_fingerprint_rejects_symbolic_links(self) -> None:
-        with tempfile.TemporaryDirectory() as value:
-            root = Path(value)
-            directory = root / "artifacts"
-            directory.mkdir()
-            target = root / "outside.obj"
-            target.write_text("outside\n", encoding="utf-8")
-            link = directory / "part.obj"
-            try:
-                link.symlink_to(target)
-            except (NotImplementedError, OSError) as exc:
-                self.skipTest(f"symbolic links are unavailable: {exc}")
-
-            with self.assertRaisesRegex(ValueError, "symbolic link"):
-                sha256_directory(directory)
 
     def test_round_trip_verifies_artifacts_and_detects_changes(self) -> None:
         with tempfile.TemporaryDirectory() as value:

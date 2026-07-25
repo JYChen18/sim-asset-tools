@@ -2,6 +2,7 @@
 
 from .acvd import acvd_remesh
 from .coacd import decompose_mesh
+from .fingerprint import body_geometry_sha256
 from .io import load_mesh
 from .normalize import normalize_mesh
 from .openvdb import openvdb_sdf
@@ -10,6 +11,7 @@ from .validation import validate_mesh
 
 __all__ = [
     "acvd_remesh",
+    "body_geometry_sha256",
     "collision_properties",
     "decompose_mesh",
     "load_mesh",

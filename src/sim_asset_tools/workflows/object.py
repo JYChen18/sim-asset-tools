@@ -12,6 +12,7 @@ from ..formats.object_manifest import write_object_manifest
 from ..formats.mjcf import write_object_mjcf
 from ..formats.urdf import write_object_urdf
 from ..mesh.coacd import decompose_mesh
+from ..mesh.fingerprint import compiled_collision_geometry_sha256
 from ..mesh.io import SUPPORTED_MESH_SUFFIXES, load_mesh
 from ..mesh.normalize import normalize_mesh
 from ..mesh.properties import collision_properties, oriented_bounding_box
@@ -66,7 +67,7 @@ def prepare_object(
     formats: tuple[str, ...] = ("mjcf", "urdf"),
     overwrite: bool = False,
 ) -> ObjectResult:
-    """Prepare one input mesh as a versioned simulation object bundle."""
+    """Prepare one input mesh as a self-describing simulation object bundle."""
     import trimesh
 
     input_path = Path(input_path).expanduser().resolve()
@@ -146,24 +147,33 @@ def prepare_object(
             collision_paths.append(collision_path)
             collision_meshes.append(collision_mesh)
 
+        combined_collision = trimesh.util.concatenate(collision_meshes)
+        mass_properties = collision_properties(combined_collision)
         mjcf_path = staging_directory / "model.xml" if "mjcf" in formats else None
         urdf_path = staging_directory / "model.urdf" if "urdf" in formats else None
         if mjcf_path is not None:
-            write_object_mjcf(mjcf_path, visual_path, collision_paths)
+            write_object_mjcf(
+                mjcf_path,
+                visual_path,
+                collision_paths,
+                mass_properties,
+            )
         if urdf_path is not None:
             write_object_urdf(urdf_path, visual_path, collision_paths)
-        combined_collision = trimesh.util.concatenate(collision_meshes)
+        body_sha256 = compiled_collision_geometry_sha256(collision_paths)
         artifacts = [source_copy, visual_path]
-        artifacts.extend(path for path in (mjcf_path, urdf_path) if path is not None)
+        models = [path for path in (mjcf_path, urdf_path) if path is not None]
+        artifacts.extend(models)
         write_object_manifest(
             staging_directory / MANIFEST_NAME,
             source_aabb_center=source_center,
             source_aabb_extents=source_extents,
             obb=oriented_bounding_box(visual_mesh),
-            mass_properties=collision_properties(combined_collision),
             recipe=asdict(recipe),
             surface=visual_path,
+            models=models,
             artifacts=artifacts,
+            body_sha256=body_sha256,
         )
 
     return ObjectResult(

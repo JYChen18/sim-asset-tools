@@ -17,4 +17,4 @@ __all__ = [
     "run_native",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

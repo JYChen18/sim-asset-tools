@@ -2,10 +2,9 @@
 
 Artifact paths are POSIX-style, relative to the bundle root, and must not
 escape it. JSON fingerprints use a deterministic UTF-8 encoding with sorted
-keys, compact separators, and no NaN; directory fingerprints cover every
-relative filename and file digest. Consumer workflows own and validate their
-schemas before using these helpers. Callers finish referenced artifacts before
-atomically replacing ``asset.json``.
+keys, compact separators, and no NaN. Consumer workflows own and validate
+their schemas before using these helpers. Callers finish referenced artifacts
+before atomically replacing ``asset.json``.
 """
 
 from __future__ import annotations
@@ -42,23 +41,6 @@ def sha256_json(value: object) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
-
-
-def sha256_directory(path: str | os.PathLike[str]) -> str:
-    """Fingerprint a directory's filenames and file contents."""
-    root = Path(path)
-    if root.is_symlink():
-        raise ValueError(f"Artifact directory must not be a symbolic link: {root}")
-    if not root.is_dir():
-        raise ValueError(f"Artifact directory does not exist: {root}")
-    hashes: dict[str, str] = {}
-    for artifact in root.rglob("*"):
-        relative = artifact.relative_to(root).as_posix()
-        if artifact.is_symlink():
-            raise ValueError(f"Artifact directory contains a symbolic link: {relative}")
-        if artifact.is_file():
-            hashes[relative] = sha256_file(artifact)
-    return sha256_json(hashes)
 
 
 def relative_artifact_path(root: Path, path: Path) -> str:
@@ -173,48 +155,6 @@ def verify_sha256_map(root: Path, value: object) -> list[str]:
         if sha256_file(path) != expected:
             errors.append(f"artifact hash does not match: {relative_path}")
     return errors
-
-
-def verify_manifest_metadata(
-    manifest: dict[str, Any],
-    names: tuple[str, ...],
-) -> list[str]:
-    """Verify JSON fingerprints for top-level metadata and the hash map itself."""
-    hashes = manifest.get("sha256")
-    if not isinstance(hashes, dict):
-        return ["manifest sha256 must be an object"]
-
-    errors: list[str] = []
-    for name in names:
-        _verify_json_fingerprint(
-            name,
-            manifest.get(name),
-            hashes.get(name),
-            errors,
-        )
-    other_hashes = {name: value for name, value in hashes.items() if name != "sha256"}
-    _verify_json_fingerprint(
-        "sha256",
-        other_hashes,
-        hashes.get("sha256"),
-        errors,
-    )
-    return errors
-
-
-def _verify_json_fingerprint(
-    name: str,
-    value: object,
-    expected: object,
-    errors: list[str],
-) -> None:
-    """Append an error if one canonical JSON fingerprint is invalid."""
-    try:
-        actual = sha256_json(value)
-    except (TypeError, ValueError):
-        errors.append(f"manifest {name} cannot be fingerprinted as JSON")
-        return
-    verify_digest(name, expected, actual, errors)
 
 
 def verify_digest(
