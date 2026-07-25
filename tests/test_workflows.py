@@ -277,6 +277,9 @@ class ObjectWorkflowTests(unittest.TestCase):
             self.assertEqual(result.mjcf_path.parent, result.output_directory)
             self.assertEqual(result.urdf_path.parent, result.output_directory)
             self.assertEqual(check_object(result.output_directory), [])
+            alias = root / "object-alias"
+            alias.symlink_to(result.output_directory, target_is_directory=True)
+            self.assertEqual(check_object(alias), [])
 
             model_root = ET.parse(result.mjcf_path).getroot()
             inertial = model_root.find("./worldbody/body/inertial")

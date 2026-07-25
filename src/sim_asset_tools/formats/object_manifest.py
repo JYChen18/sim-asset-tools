@@ -128,7 +128,7 @@ def check_object_manifest(path_or_directory: str | Path) -> list[str]:
     errors: list[str] = []
     _check_metadata_shapes(manifest, errors)
     files, bodies = _check_hash_structure(manifest, errors)
-    root = manifest_path.parent
+    root = manifest_path.parent.resolve()
     errors.extend(verify_sha256_map(root, files))
     _check_manifest_relations(root, manifest, files, bodies, errors)
     _check_object_meshes(root, manifest, bodies, errors)
