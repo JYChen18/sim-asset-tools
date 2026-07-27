@@ -6,7 +6,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "sim-asset-tools"
-version = "0.4.0"
+version = "0.4.1"
 description = "Portable tools for preparing simulation-ready mesh and model assets"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -21,7 +21,6 @@ authors = [
 ]
 dependencies = [
   "coacd>=1.0.11",
-  "mujoco==3.9.0",
   "numpy>=1.26",
   "trimesh>=4.0",
   "vtk==9.6.2",

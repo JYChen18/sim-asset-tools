@@ -3,7 +3,7 @@
 The object schema describes model-to-body ownership, one sampling surface per
 body, source and oriented bounds, and the preparation recipe. Ordinary files
 are hashed individually, while all collision pieces belonging to a body share
-one canonical geometry fingerprint. Mass properties live in the generated
+one exact source-geometry fingerprint. Mass properties live in the generated
 model rather than in this manifest.
 """
 
@@ -110,6 +110,21 @@ def write_object_manifest(
             "sha256": hashes,
         },
     )
+
+
+def load_object_collision_meshes(
+    directory: str | Path,
+) -> tuple[tuple[Path, object], ...]:
+    """Load collision pieces in the deterministic object-body hash order."""
+    root = Path(directory).expanduser().resolve()
+    errors: list[str] = []
+    paths = _collision_paths(root, errors)
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    from ..mesh.io import load_mesh
+
+    return tuple((path, load_mesh(path)) for path in paths)
 
 
 def check_object_manifest(path_or_directory: str | Path) -> list[str]:
@@ -336,7 +351,7 @@ def _check_object_meshes(
 ) -> None:
     import trimesh
 
-    from ..mesh.fingerprint import compiled_collision_geometry_sha256
+    from ..mesh.fingerprint import body_geometry_sha256
     from ..mesh.io import load_mesh
     from ..mesh.properties import collision_properties
     from ..mesh.validation import validate_mesh
@@ -372,7 +387,7 @@ def _check_object_meshes(
 
     if collision_meshes and len(collision_meshes) == len(collision_paths):
         try:
-            actual = compiled_collision_geometry_sha256(collision_paths)
+            actual = body_geometry_sha256(collision_meshes)
         except (RuntimeError, ValueError) as exc:
             errors.append(f"could not fingerprint object collision geometry: {exc}")
         else:
@@ -415,7 +430,6 @@ def _check_object_meshes(
         references = _model_collision_paths(
             root,
             model_path,
-            bodies.get(_BODY_NAME),
             mass_properties,
             expected_surface,
             errors,
@@ -470,7 +484,6 @@ def _load_and_validate_mesh(
 def _model_collision_paths(
     bundle_root: Path,
     model_path: Path,
-    expected_body_digest: object,
     mass_properties: dict[str, object] | None,
     expected_surface: str | None,
     errors: list[str],
@@ -487,7 +500,6 @@ def _model_collision_paths(
             bundle_root,
             model_path,
             root,
-            expected_body_digest,
             mass_properties,
             expected_surface,
             errors,
@@ -510,7 +522,6 @@ def _mjcf_collision_paths(
     bundle_root: Path,
     model_path: Path,
     root: ET.Element,
-    expected_body_digest: object,
     mass_properties: dict[str, object] | None,
     expected_surface: str | None,
     errors: list[str],
@@ -581,21 +592,6 @@ def _mjcf_collision_paths(
     if root.find("./contact/pair") is not None:
         errors.append(
             f"MJCF object bundles must not use explicit contact pairs: {label}"
-        )
-    try:
-        from ..mesh.fingerprint import mujoco_body_geometry_sha256
-
-        actual = mujoco_body_geometry_sha256(model_path)
-    except (RuntimeError, ValueError) as exc:
-        errors.append(
-            f"MJCF object collision geometry could not be compiled: {label}: {exc}"
-        )
-    else:
-        verify_digest(
-            f"model body object ({label})",
-            expected_body_digest,
-            actual,
-            errors,
         )
     return references
 

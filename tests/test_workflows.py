@@ -16,6 +16,7 @@ _HAS_MESH_DEPS = all(
 
 @unittest.skipUnless(_HAS_MESH_DEPS, "requires mesh dependencies")
 class ObjectWorkflowTests(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("mujoco"), "requires MuJoCo")
     def test_explicit_mjcf_inertial_matches_density_inference(self) -> None:
         import mujoco
         import numpy as np
@@ -197,8 +198,11 @@ class ObjectWorkflowTests(unittest.TestCase):
         from xml.etree import ElementTree as ET
 
         from sim_asset_tools.formats.manifest import sha256_file, sha256_json
-        from sim_asset_tools.formats.object_manifest import OBJECT_MANIFEST_SCHEMA
-        from sim_asset_tools.mesh import load_mesh
+        from sim_asset_tools.formats.object_manifest import (
+            OBJECT_MANIFEST_SCHEMA,
+            load_object_collision_meshes,
+        )
+        from sim_asset_tools.mesh import body_geometry_sha256, load_mesh
         from sim_asset_tools.workflows import check_object, prepare_object
         from sim_asset_tools.workflows import object as object_workflow
 
@@ -270,6 +274,17 @@ class ObjectWorkflowTests(unittest.TestCase):
             self.assertIn("model.urdf", hashes["files"])
             self.assertFalse(
                 any(path.startswith("collision/") for path in hashes["files"])
+            )
+            collision_records = load_object_collision_meshes(
+                result.output_directory
+            )
+            self.assertEqual(
+                [path.name for path, _mesh in collision_records],
+                sorted(collision_contents),
+            )
+            self.assertEqual(
+                body_geometry_sha256(mesh for _path, mesh in collision_records),
+                hashes["bodies"]["object"],
             )
 
             self.assertTrue(result.mjcf_path.is_file())

@@ -12,7 +12,7 @@ from ..formats.object_manifest import write_object_manifest
 from ..formats.mjcf import write_object_mjcf
 from ..formats.urdf import write_object_urdf
 from ..mesh.coacd import decompose_mesh
-from ..mesh.fingerprint import compiled_collision_geometry_sha256
+from ..mesh.fingerprint import body_geometry_sha256
 from ..mesh.io import SUPPORTED_MESH_SUFFIXES, load_mesh
 from ..mesh.normalize import normalize_mesh
 from ..mesh.properties import collision_properties, oriented_bounding_box
@@ -160,7 +160,7 @@ def prepare_object(
             )
         if urdf_path is not None:
             write_object_urdf(urdf_path, visual_path, collision_paths)
-        body_sha256 = compiled_collision_geometry_sha256(collision_paths)
+        body_sha256 = body_geometry_sha256(collision_meshes)
         artifacts = [source_copy, visual_path]
         models = [path for path in (mjcf_path, urdf_path) if path is not None]
         artifacts.extend(models)

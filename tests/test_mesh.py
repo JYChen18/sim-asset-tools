@@ -1,21 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
-import tempfile
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 
 _HAS_PROPERTY_DEPS = all(
     importlib.util.find_spec(name) is not None
     for name in ("numpy", "trimesh", "vtkmodules")
 )
-_HAS_MUJOCO_DEPS = all(
-    importlib.util.find_spec(name) is not None
-    for name in ("mujoco", "numpy", "trimesh")
-)
-
-
 @unittest.skipUnless(importlib.util.find_spec("numpy"), "requires numpy")
 class MeshTests(unittest.TestCase):
     def test_body_geometry_fingerprint_has_a_cross_repository_golden_value(
@@ -47,23 +39,38 @@ class MeshTests(unittest.TestCase):
 
         self.assertEqual(
             body_geometry_sha256([mesh]),
-            "3799bb1c7b29bd6b13a1aa6e56a497be85d37da451b061e99863a17e5afd3424",
+            "0aa8e3ec34b9e3784f29dd2103e3772a32f45ecf6eb7bc679679010864420d6b",
         )
         reordered = SimpleNamespace(
             vertices=mesh.vertices,
             faces=mesh.faces[::-1, ::-1],
         )
-        self.assertEqual(
+        self.assertNotEqual(
             body_geometry_sha256([reordered]),
             body_geometry_sha256([mesh]),
         )
-        oversized = SimpleNamespace(
+        nonfinite = SimpleNamespace(
             vertices=mesh.vertices.copy(),
             faces=mesh.faces,
         )
-        oversized.vertices[0, 0] = 1.0e13
-        with self.assertRaisesRegex(ValueError, "coordinate range"):
-            body_geometry_sha256([oversized])
+        nonfinite.vertices[0, 0] = np.inf
+        with self.assertRaisesRegex(ValueError, "finite"):
+            body_geometry_sha256([nonfinite])
+
+    def test_body_geometry_fingerprint_concatenates_meshes(self) -> None:
+        import trimesh
+
+        from sim_asset_tools.mesh import body_geometry_sha256
+
+        left = trimesh.creation.box(extents=(0.5, 1.0, 1.0))
+        right = trimesh.creation.box(extents=(0.5, 1.0, 1.0))
+        left.apply_translation((-0.25, 0.0, 0.0))
+        right.apply_translation((0.25, 0.0, 0.0))
+
+        self.assertEqual(
+            body_geometry_sha256([left, right]),
+            body_geometry_sha256([trimesh.util.concatenate((left, right))]),
+        )
 
     def test_validation_checks_orientation_of_every_component(self) -> None:
         import numpy as np
@@ -94,39 +101,6 @@ class MeshTests(unittest.TestCase):
             validate_mesh(Mesh(reverse_second=True), watertight=True),
             ["mesh normals must face outward"],
         )
-
-
-@unittest.skipUnless(_HAS_MUJOCO_DEPS, "requires MuJoCo mesh dependencies")
-class CompiledMeshFingerprintTests(unittest.TestCase):
-    def test_compiled_fingerprint_ignores_source_mesh_ordering(self) -> None:
-        import numpy as np
-        import trimesh
-
-        from sim_asset_tools.mesh.fingerprint import (
-            compiled_collision_geometry_sha256,
-        )
-
-        mesh = trimesh.creation.cylinder(radius=0.7, height=1.3, sections=7)
-        permutation = np.arange(len(mesh.vertices))[::-1]
-        inverse = np.empty_like(permutation)
-        inverse[permutation] = np.arange(len(permutation))
-        reordered = trimesh.Trimesh(
-            vertices=np.asarray(mesh.vertices)[permutation],
-            faces=inverse[np.asarray(mesh.faces)[::-1, ::-1]],
-            process=False,
-        )
-
-        with tempfile.TemporaryDirectory() as value:
-            root = Path(value)
-            original_path = root / "original.obj"
-            reordered_path = root / "reordered.obj"
-            mesh.export(original_path)
-            reordered.export(reordered_path)
-
-            self.assertEqual(
-                compiled_collision_geometry_sha256([original_path]),
-                compiled_collision_geometry_sha256([reordered_path]),
-            )
 
 
 @unittest.skipUnless(_HAS_PROPERTY_DEPS, "requires mesh property dependencies")
